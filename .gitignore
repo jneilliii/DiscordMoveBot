@@ -3,3 +3,4 @@ move_env/
 venv/
 .idea/
 *.db
+/movebot.log

@@ -991,7 +991,7 @@ async def delete_messages(aborter, log_channel, messages):
                              "Some messages may not have been deleted. "
                              "The bot attempted to delete a message, but could not find it. "
                              "Did someone already delete it? "
-                             + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command?")
+                             + f"Was it a part of a `{LISTEN_TO}+/-**x** #channel` command?")
         except Exception as exc:
             await send_info(log_channel, exc, "Deletion failed.",
                              "Some messages may not have been deleted. "
