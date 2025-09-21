@@ -100,15 +100,16 @@ available_prefs = {
     "embed_message": "0",
     "move_message": "MESSAGE_USER, your message has been LC_OPERATION to DESTINATION_CHANNEL by MOVER_USER.",
     "strip_ping": "0",
-    "delete_original": "1" # allows to original message to be preserved @SadPuppies 5/31/23
+    "delete_original": "1", # allows to original message to be preserved @SadPuppies 5/31/23
+    "mod_log_channel": "mod-log" # allows to set the log channel name to use @jneilliii 9/20/25
 }
 pref_help = {
     "notify_dm": f"""
 **name:** `notify_dm`
 **value:**
- `0`  Sends move message in channel and #mod-log
- `1`  Sends move message as a DM and to #mod-log
- `2`  Sends move message only to #mod-log
+ `0`  Sends move message in channel and #staff-log
+ `1`  Sends move message as a DM and to #staff-log
+ `2`  Sends move message only to #staff-log
 
 **example:**
 `{LISTEN_TO}pref notify_dm 1`
@@ -130,7 +131,7 @@ pref_help = {
 **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
 
 **example:**
-`{LISTEN_TO}pref move_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
+`{LISTEN_TO}pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
 
     "strip_ping": f"""
 **name:** `strip_ping`
@@ -150,7 +151,15 @@ pref_help = {
 `2` Also delete messages that MoveBot could not copy.
 
 **example:**
-`{LISTEN_TO}pref delete_original 0`
+`{LISTEN_TO}pref mod_log_channel 0`
+    """,
+    "mod_log_channel": f"""
+**name:** `mod_log_channel`
+**value:**
+any channel name
+
+**example:**
+`{LISTEN_TO}pref mod_log_channel mod-log`   
     """
 }
 prefs = {}
@@ -166,7 +175,8 @@ async def db_init():
                 embed_message TEXT,
                 move_message TEXT,
                 strip_ping TEXT,
-                delete_original TEXT)"""
+                delete_original TEXT,
+                mod_log_channel TEXT)"""
             ) #All guild preferences go on one line now. This will eliminate all duplicate entries @SadPuppies 4/9/23
             #setting some of these values to `INT` type will be tedious at best becuase `move_message` will have to be `TEXT` and specifying different types within a single `update pref` function (see below) is beyond this author's expertise @SadPuppies 4/9/23
             await cursor.execute("SELECT * FROM prefs")
@@ -180,6 +190,7 @@ async def db_init():
                 prefs[g_id]["move_message"] = [str(row["move_message"])]
                 prefs[g_id]["strip_ping"] = [str(row["strip_ping"])]
                 prefs[g_id]["delete_original"] = [str(row["delete_original"])]
+                prefs[g_id]["mod_log_channel"] = [str(row["mod_log_channel"])]
         await cursor.close()
         await connection.commit()
 
@@ -270,8 +281,8 @@ async def update_pref(guild_id, pref, value): #This needs to be it's own functio
         prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?)", (int(guild_id),prefs[guild_id]["notify_dm"], prefs[guild_id]["embed_message"], prefs[guild_id
-]["move_message"], prefs[guild_id]["strip_ping"], prefs[guild_id]["delete_original"]))
+                await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?, ?)", (int(guild_id),prefs[guild_id]["notify_dm"], prefs[guild_id]["embed_message"], prefs[guild_id
+]["move_message"], prefs[guild_id]["strip_ping"], prefs[guild_id]["delete_original"], prefs[guild_id]["mod_log_channel"]))
                 await cursor.close()
                 await connection.commit()
     else:
@@ -490,22 +501,21 @@ async def on_guild_remove(guild):
 async def on_message(msg_in):
     if not msg_in.content.startswith(LISTEN_TO):
         return
-
-    txt_channel = msg_in.channel
-    mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
     if msg_in.author == bot.user or msg_in.author.bot:
         return
+    txt_channel = msg_in.channel
+    guild_id = msg_in.guild.id
+    is_reply = msg_in.reference is not None
+    params, options = parse_args(msg_in.content, 2 if is_reply else 3)
+    override = await make_prefs_from(txt_channel, options)
+    mod_log_channel = await get_pref(guild_id, 'mod_log_channel', override)
+    mod_channel = discord.utils.get(msg_in.guild.channels, name=mod_log_channel)
+
     if not txt_channel.permissions_for(msg_in.author).manage_messages:
         send_channel = mod_channel if mod_channel else msg_in.channel
         await send_channel.send(f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on origin channel <#{txt_channel.id}>.")
         await msg_in.add_reaction("🚫")
         return
-
-    guild_id = msg_in.guild.id
-    is_reply = msg_in.reference is not None
-    params, options = parse_args(msg_in.content, 2 if is_reply else 3)
-    override = await make_prefs_from(txt_channel, options)
-
     # !mv help
     if len(params) < 2 or params[1] == 'help':
         e = discord.Embed(title="MoveBot Help")
@@ -631,7 +641,11 @@ async def abort_movebot(msg_in):
             if not active:
                 msg_in.channel.send('There are no operations to abort!')
                 return
-            mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
+            is_reply = msg_in.reference is not None
+            params, options = parse_args(msg_in.content, 2 if is_reply else 3)
+            override = await make_prefs_from(txt_channel, options)
+            mod_log_channel = await get_pref(guild_id, 'mod_log_channel', override)
+            mod_channel = discord.utils.get(msg_in.guild.channels, name=mod_log_channel)
             if mod_channel:
                 await mod_channel.send(content=f'<@!{msg_in.author.id}> is aborting all running MoveBot operations.')
             status_message = await msg_in.channel.send(status)
@@ -869,10 +883,14 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
         return ( moved, failed, author_map, new_thread )
 
 async def send_to_mod_channel(mod_channel, msg_in, moved, failed, dest_channel, delete_original, source_channel):
+        txt_channel = source_channel if source_channel else msg_in.channel
         if not mod_channel:
-            mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
+            is_reply = msg_in.reference is not None
+            params, options = parse_args(msg_in.content, 2 if is_reply else 3)
+            override = await make_prefs_from(txt_channel, options)
+            mod_log_channel = await get_pref(guild_id, 'mod_log_channel', override)
+            mod_channel = discord.utils.get(msg_in.guild.channels, name=mod_log_channel)
         if mod_channel:
-            txt_channel = source_channel if source_channel else msg_in.channel
             description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER."
             description = description.replace("MESSAGE_COUNT", str(len(moved) + len(failed))) \
                                      .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
