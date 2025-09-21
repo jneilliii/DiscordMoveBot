@@ -151,7 +151,7 @@ pref_help = {
 `2` Also delete messages that MoveBot could not copy.
 
 **example:**
-`{LISTEN_TO}pref mod_log_channel 0`
+`{LISTEN_TO}pref delete_original 0`
     """,
     "mod_log_channel": f"""
 **name:** `mod_log_channel`
